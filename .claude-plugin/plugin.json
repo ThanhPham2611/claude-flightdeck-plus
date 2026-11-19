@@ -1,7 +1,7 @@
 {
   "name": "flightdeck-plus",
-  "version": "0.7.0",
-  "description": "Flightdeck Plus: bản fork của Flightdeck (bảng điều khiển agent trực tiếp cho Claude Code) thêm hộp token (hôm nay, tổng, ngày cao nhất), lời chào, và mascot Clawd gõ code trên laptop khi làm việc, ngồi nhìn quanh khi rảnh. Giao diện tiếng Việt",
+  "version": "0.8.0",
+  "description": "Flightdeck Plus: bản fork của Flightdeck (bảng điều khiển agent trực tiếp cho Claude Code): khung chính lớn (model, nhánh git, effort, chế độ, ngữ cảnh, chi phí, 5h, 7d), hộp token (hôm nay, tổng, ngày cao nhất), token theo từng agent trong lần làm việc, lời chào và mascot Clawd. Giao diện tiếng Việt",
   "author": {
     "name": "Stephen Casella",
     "url": "https://github.com/scasella"
@@ -42,9 +42,9 @@
     },
     "panels": {
       "title": "Các bảng",
-      "description": "Các bảng theo thứ tự hiển thị, cách nhau bằng dấu phẩy: main, tokens, architect, gate, agents, loops, receipt, log. Bỏ một tên để ẩn bảng đó.",
+      "description": "Các bảng theo thứ tự hiển thị, cách nhau bằng dấu phẩy: main, tokens, architect, gate, agents, loops, work. Bỏ một tên để ẩn bảng đó.",
       "type": "string",
-      "default": "main,tokens,architect,gate,agents,loops,receipt,log"
+      "default": "main,tokens,architect,gate,agents,loops,work"
     },
     "motion": {
       "title": "Chuyển động",

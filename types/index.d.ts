@@ -14,6 +14,8 @@ export type Main = {
   /** The main loop's last answered request: time to its first piece of response. Null until one is
    *  measured, absent in older state; a `tokPerS` kept by 0.5.0 and earlier is ignored. */
   speed?: { ttftMs: number } | null
+  /** The checked-out git branch, or a detached HEAD's short hash; empty outside a repository. Absent in older state. */
+  branch?: string
 }
 
 export type Usage = {
@@ -75,6 +77,8 @@ export type AgentCard = {
   ctx: number
   /** Output tokens summed over its steps. */
   out: number
+  /** Every token its requests used, split as `Count` is: what the box under the cards adds up. Absent in older state. */
+  used?: Count
   steps: number
   lastStop: string | null
   tools: ToolNote[]
@@ -84,30 +88,16 @@ export type AgentCard = {
 /** A model loop whose id matches no card: a workflow agent, a compaction or a memory fork. */
 export type Loop = { id: string; steps: number; firstAt: number; lastAt: number; isDone: boolean }
 
-export type LogLine = {
-  at: number
-  who: string
-  text: string
-  agentId: string | null
-  kind: 'info' | 'error' | 'consult' | 'done'
-}
-
 export type Turn = {
   edits: number
   errorStreak: number
   errors: number
   isReviewing: boolean
   startedAt: number
-  costAtStart: number | null
-}
-
-export type Receipt = {
-  durationMs: number
-  agents: number
-  edits: number
-  errors: number
-  costDelta: number | null
-  reason: string
+  /** When the turn finished; null while it runs. Absent in older state. */
+  endedAt?: number | null
+  /** What the main loop's requests used since this turn started. Absent in older state. */
+  used?: Count
 }
 
 export type Layout = 'auto' | 'compact' | 'wide' | 'mini'
@@ -132,9 +122,7 @@ declare module 'claude-code' {
       gate: Gate
       agents: AgentCard[]
       loops: Loop[]
-      log: LogLine[]
       turn: Turn
-      receipt: Receipt | null
       view: View
       roster: Roster
       tokens: Tokens

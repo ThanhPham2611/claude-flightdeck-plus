@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { AgentCard, Architect, Bucket, Check, Gate, Layout, LogLine, Loop, Main, Roster, Turn, Usage, View } from '../types'
+import type { AgentCard, Architect, Bucket, Check, Gate, Layout, Loop, Main, Roster, Turn, Usage, View } from '../types'
 import {
   DEFAULT_ARCHITECT,
   addCard,
@@ -15,7 +15,12 @@ import {
   DEFAULT_VIEW,
   EDIT_TOOLS,
   SCHEMA_VERSION,
+  addCount,
   addTokens,
+  countOf,
+  bar,
+  branchOf,
+  tokensOf,
   afterCall,
   dayKey,
   fmtDay,
@@ -68,22 +73,18 @@ import {
   fmtResetIn,
   fmtSpeed,
   listOf,
-  logRows,
   marksIn,
   momentOf,
   normalize,
   normalizeCard,
   normalizeGate,
-  normalizeLog,
   noteTool,
   PALETTES,
   SVG_COLORS,
   parseConfig,
   prettyModel,
-  promptLine,
   handbackOf,
   adviceLine,
-  receiptOf,
   recordCheck,
   settleCheck,
   shorten,
@@ -106,9 +107,7 @@ const architect = atom({ plugin: 'flightdeck-plus', key: 'architect' } as const,
 const gate = atom({ plugin: 'flightdeck-plus', key: 'gate' } as const, DEFAULT_GATE)
 const agents = atom({ plugin: 'flightdeck-plus', key: 'agents' } as const, [])
 const loops = atom({ plugin: 'flightdeck-plus', key: 'loops' } as const, [])
-const log = atom({ plugin: 'flightdeck-plus', key: 'log' } as const, [])
 const turn = atom({ plugin: 'flightdeck-plus', key: 'turn' } as const, DEFAULT_TURN)
-const receipt = atom({ plugin: 'flightdeck-plus', key: 'receipt' } as const, null)
 const view = atom({ plugin: 'flightdeck-plus', key: 'view' } as const, DEFAULT_VIEW)
 const roster = atom({ plugin: 'flightdeck-plus', key: 'roster' } as const, DEFAULT_ROSTER)
 const tokens = atom({ plugin: 'flightdeck-plus', key: 'tokens' } as const, DEFAULT_TOKENS)
@@ -143,9 +142,6 @@ async function getCards($: EngineInterface): Promise<AgentCard[]> {
 async function getLoops($: EngineInterface): Promise<Loop[]> {
   return listOf<Loop>(await read($, loops))
 }
-async function getLog($: EngineInterface): Promise<LogLine[]> {
-  return normalizeLog(await read($, log))
-}
 async function getTurn($: EngineInterface): Promise<Turn> {
   return normalize(DEFAULT_TURN, await read($, turn))
 }
@@ -161,15 +157,9 @@ async function getRoster($: EngineInterface): Promise<Roster> {
 async function migrate($: EngineInterface) {
   const m = await read($, meta)
   if ((m?.schemaVersion ?? 0) >= SCHEMA_VERSION) return
-  await update($, log, list => normalizeLog(list))
   await update($, agents, list => listOf<unknown>(list).map(normalizeCard))
   await update($, gate, g => normalizeGate(g))
   await update($, meta, () => ({ schemaVersion: SCHEMA_VERSION }))
-}
-
-async function say($: EngineInterface, who: string, text: string, kind: LogLine['kind'] = 'info', agentId: string | null = null) {
-  const line: LogLine = { at: await $.clock.now(), who, text, kind, agentId }
-  await update($, log, list => [...normalizeLog(list), line].slice(-60))
 }
 
 async function refreshStatus($: EngineInterface, cfg: Config) {
@@ -189,19 +179,12 @@ async function refreshStatus($: EngineInterface, cfg: Config) {
   $.ui.status(shown.length > 0 ? shown.join(' · ') : undefined)
 }
 
-async function whoIs($: EngineInterface, agentId: string | undefined) {
-  if (!agentId) return 'main'
-  const card = (await getCards($)).find(c => c.id === agentId)
-  return card ? shorten(cardTitle(card), 14) : 'agent'
-}
-
 async function consultStarted($: EngineInterface, cfg: Config, id: string, via: string) {
   const t = await getTurn($)
   const moment = momentOf(t)
   const at = await $.clock.now()
   await update($, architect, a => startConsult(normalize(DEFAULT_ARCHITECT, a), { id, at, moment, via }))
   if (moment === 'before done') await update($, turn, x => ({ ...normalize(DEFAULT_TURN, x), isReviewing: true }))
-  await say($, cfg.architectLabel.toLowerCase(), cfg.moments ? `${vi(moment)} · ${via}` : `đã tham vấn · ${via}`, 'consult')
   await refreshStatus($, cfg)
 }
 
@@ -211,13 +194,11 @@ async function consultEnded($: EngineInterface, cfg: Config, advice: string | nu
   const text = first ? shorten(first.replace(/^[#>*\s-]+/, ''), 160) : null
   await update($, architect, a => endConsult(normalize(DEFAULT_ARCHITECT, a), at, text, id))
   await update($, turn, t => ({ ...normalize(DEFAULT_TURN, t), isReviewing: false }))
-  await say($, cfg.architectLabel.toLowerCase(), text ? `lời khuyên: ${shorten(text, 60)}` : 'đã nhận lời khuyên', 'consult')
   await refreshStatus($, cfg)
 }
 
 async function noteAdvice($: EngineInterface, cfg: Config, advice: string) {
   await update($, architect, x => ({ ...normalize(DEFAULT_ARCHITECT, x), lastAdvice: advice }))
-  await say($, cfg.architectLabel.toLowerCase(), `lời khuyên: ${shorten(advice, 60)}`, 'consult')
 }
 
 async function isArchitectType($: EngineInterface, cfg: Config, type: string) {
@@ -230,14 +211,12 @@ async function openPane($: EngineInterface, cfg: Config) {
 }
 
 async function resetAll($: EngineInterface) {
-  await update($, main, m => ({ ...DEFAULT_MAIN, model: normalize(DEFAULT_MAIN, m).model, mode: normalize(DEFAULT_MAIN, m).mode }))
+  await update($, main, m => ({ ...DEFAULT_MAIN, model: normalize(DEFAULT_MAIN, m).model, mode: normalize(DEFAULT_MAIN, m).mode, branch: normalize(DEFAULT_MAIN, m).branch }))
   await update($, architect, () => DEFAULT_ARCHITECT)
   await update($, gate, () => DEFAULT_GATE)
   await update($, agents, () => [])
   await update($, loops, () => [])
-  await update($, log, () => [])
   await update($, turn, () => DEFAULT_TURN)
-  await update($, receipt, () => null)
   await update($, view, () => DEFAULT_VIEW)
   // The context gauge waits for the next measurement rather than showing the pre-clear fill.
   await update($, usage, x => ({ ...normalize(DEFAULT_USAGE, x), pct: null, tokens: null }))
@@ -252,10 +231,33 @@ async function readCompactWindow($: EngineInterface, window: number) {
   await update($, usage, x => afterCompactRead(normalize(DEFAULT_USAGE, x), window, r?.context.breakdown))
 }
 
-/** The session's cost read fresh, not from the last measurement: the receipt subtracts two of these. */
-async function costNow($: EngineInterface): Promise<number | null> {
-  const u = await $.session.usage().catch(() => null)
-  return u?.cost?.usd ?? null
+/**
+ * The checked-out branch, read from `.git/HEAD` up from the session's directory: '' outside a repository, or
+ * where the file system will not say. A worktree's `.git` is a file naming its own git directory. Run at the
+ * session's start and around each turn, where a checkout would show.
+ */
+async function readBranch($: EngineInterface): Promise<string> {
+  try {
+    let dir = (await $.session.cwd()).replace(/[\\/]+$/, '')
+    for (let depth = 0; depth < 12 && dir !== ''; depth++) {
+      let head = await $.fs.read(`${dir}/.git/HEAD`).catch(() => null)
+      if (head === null) {
+        const pointer = await $.fs.read(`${dir}/.git`).catch(() => null)
+        const target = pointer === null ? null : /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim()
+        if (target) head = await $.fs.read(`${/^([\\/]|[A-Za-z]:)/.test(target) ? target : `${dir}/${target}`}/HEAD`).catch(() => null)
+      }
+      if (head !== null) return branchOf(head)
+      dir = dir.replace(/[\\/][^\\/]*$/, '')
+    }
+  } catch {
+    // No session directory, or no file system to ask: no branch shown.
+  }
+  return ''
+}
+
+async function noteBranch($: EngineInterface) {
+  const branch = await readBranch($)
+  await update($, main, m => (normalize(DEFAULT_MAIN, m).branch === branch ? normalize(DEFAULT_MAIN, m) : { ...normalize(DEFAULT_MAIN, m), branch }))
 }
 
 async function noteMode($: EngineInterface, mode: string | undefined) {
@@ -302,13 +304,21 @@ export const register: Register = (on, options) => {
       argumentHint: '[open|close|reset|layout auto|compact|wide|mini]',
     })
     await migrate($)
+    await noteBranch($)
     // The counts outlive sessions. `liveFrom` marks where this plugin's own counting began: the history
     // imported from the session logs ends there, so no response is in both.
     const now0 = await $.clock.now()
     if ((await $.store.get('liveFrom').catch(() => undefined)) === undefined) await $.store.set('liveFrom', new Date(now0).toISOString()).catch(() => undefined)
     const loaded = await loadDays($).catch(() => null)
     if (loaded) await update($, tokens, () => ({ days: loaded.all }))
-    if (e.isInteractive) $.ui.toast(`${greeting(new Date(now0).getHours(), cfg.userName)} Flightdeck sẵn sàng.`)
+    // A greeting that cannot be shown is no reason to fail the start.
+    if (e.isInteractive) {
+      try {
+        $.ui.toast(`${greeting(new Date(now0).getHours(), cfg.userName)} Flightdeck sẵn sàng.`)
+      } catch {
+        // No surface to show it on.
+      }
+    }
     // A host without usage (headless, an SDK host, a session not yet bound) just starts without it.
     const u = await $.session.usage().catch(() => null)
     // A resumed session has a fill to draw already: its compaction window is read now, not at its first
@@ -389,9 +399,10 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     // A subagent's turn (its spawn, or a resume by SendMessage) is its card's, not the main turn's.
     if (e.agentId !== undefined) return next(e)
-    const [now, cost] = await Promise.all([$.clock.now(), costNow($)])
-    await update($, turn, () => ({ ...DEFAULT_TURN, startedAt: now, costAtStart: cost }))
+    const now = await $.clock.now()
+    await update($, turn, () => ({ ...DEFAULT_TURN, startedAt: now }))
     await update($, main, m => ({ ...normalize(DEFAULT_MAIN, m), isRunning: true }))
+    await noteBranch($)
     // A background architect's report reaches the main loop as the text opening this turn. The
     // SubagentHandback tool call (in tool.call) normally carries it first; this is the fallback.
     const back = e.text ? handbackOf(e.text) : null
@@ -399,10 +410,6 @@ export const register: Register = (on, options) => {
     if (back && a && a.ids.includes(back.from)) {
       const advice = adviceLine(back.body)
       if (advice && advice !== a.lastAdvice) await noteAdvice($, cfg, advice)
-    } else if (e.text) {
-      // Masked before the cut, so a key the cut would split is masked whole.
-      const p = promptLine(redact(e.text))
-      await say($, p.who, p.text)
     }
     return next(e)
   })
@@ -424,15 +431,7 @@ export const register: Register = (on, options) => {
       if (live) {
         const read = afterFillRead(u0, live.context.tokens !== undefined, at)
         hasFill = read.usage.hasFill
-        let isCompaction = false
-        if (read.usage !== u0) {
-          await update($, usage, x => {
-            const r = afterFillRead(normalize(DEFAULT_USAGE, x), live.context.tokens !== undefined, at)
-            isCompaction = r.isCompaction
-            return r.usage
-          })
-        }
-        if (isCompaction) await say($, 'main', 'đã nén ngữ cảnh (ước tính)')
+        if (read.usage !== u0) await update($, usage, x => afterFillRead(normalize(DEFAULT_USAGE, x), live.context.tokens !== undefined, at).usage)
       }
       // Time the response as it passes: its first piece that is neither the engine's envelope nor the
       // stop. One clock read in the stream and nothing stored until it has ended.
@@ -445,6 +444,7 @@ export const register: Register = (on, options) => {
       }
       const result = await s.result
       tally($, result.usage)
+      if (result.usage) await update($, turn, t => ({ ...normalize(DEFAULT_TURN, t), used: addCount(normalize(DEFAULT_TURN, t).used, tokensOf(result.usage)) }))
       const speed = result.usage ? stepSpeed(sentAt, firstAt) : null
       if (speed) await update($, main, m => ({ ...normalize(DEFAULT_MAIN, m), speed }))
       // Marked here, not at the next request: two compactions can come with one response between them.
@@ -466,10 +466,7 @@ export const register: Register = (on, options) => {
             return resumeCard(c)
           }),
       )
-      if (isResumed) {
-        await say($, await whoIs($, id), 'tiếp tục', 'info', id)
-        await refreshStatus($, cfg)
-      }
+      if (isResumed) await refreshStatus($, cfg)
     }
     const result = yield* next(e)
     tally($, result.usage)
@@ -477,7 +474,6 @@ export const register: Register = (on, options) => {
     if (cards.some(c => c.id === id)) {
       const step = { model: e.model, usage: result.usage, stopReason: result.stopReason }
       await update($, agents, list => listOf<unknown>(list).map(normalizeCard).map(c => (c.id === id ? applyStep(c, step) : c)))
-      if (result.stopReason === 'max_tokens') await say($, await whoIs($, id), 'chạm max_tokens', 'error', id)
     } else if (!a.ids.includes(id)) {
       const now = await $.clock.now()
       await update($, loops, l => stepLoop(listOf<Loop>(l), id, now))
@@ -521,7 +517,6 @@ export const register: Register = (on, options) => {
         const u = normalize(DEFAULT_USAGE, x)
         return { ...u, compactions: u.compactions + 1, lastCompactAt: now }
       })
-      await say($, 'main', `đã nén ngữ cảnh (${e.trigger})`)
     }
     return done
   })
@@ -541,7 +536,6 @@ export const register: Register = (on, options) => {
       await update($, gate, g => recordCheck(normalizeGate(g), check))
       // The status line updates when the call settles; only a refusal ends here.
       if (verdict.decision === 'deny') {
-        await say($, 'gate', `bị quy tắc từ chối · ${check.detail}`, 'error')
         await refreshStatus($, cfg)
       }
     }
@@ -585,10 +579,6 @@ export const register: Register = (on, options) => {
           .map(c => (c.id === id ? noteTool(c, { tool: e.tool, text, isError: hasFailed || ran.deny !== undefined }) : c)),
       )
     }
-    // The log keeps what is worth a glance: refusals, errors and edits; the rest is on the cards.
-    if (ran.deny !== undefined) await say($, await whoIs($, e.agentId), `${text}  bị từ chối`, 'error', e.agentId ?? null)
-    else if (hasFailed) await say($, await whoIs($, e.agentId), `${text}  ✗`, 'error', e.agentId ?? null)
-    else if (isEdit) await say($, await whoIs($, e.agentId), text, 'info', e.agentId ?? null)
     if (isSettled || !didRun) await refreshStatus($, cfg)
     return ran
   })
@@ -643,18 +633,8 @@ export const register: Register = (on, options) => {
       description: stripControl(redact(e.description ?? '')),
       spawnedAt: await $.clock.now(),
     }
-    // Decided in the write: a resume whose first step already put its card back to running is not logged again.
-    let isNew = true
-    let isResumed = false
-    await update($, agents, list => {
-      const cards = listOf<unknown>(list).map(normalizeCard)
-      const known = cards.find(c => c.id === id)
-      isNew = known === undefined
-      isResumed = known !== undefined && known.status !== 'running'
-      return addCard(cards, card)
-    })
+    await update($, agents, list => addCard(listOf<unknown>(list).map(normalizeCard), card))
     await update($, loops, l => listOf<Loop>(l).filter(x => x.id !== id))
-    if (isNew || isResumed) await say($, shorten(cardTitle(card), 12), isNew ? `đã tạo · ${card.type}` : 'tiếp tục', 'info', id)
     await refreshStatus($, cfg)
     return started
   })
@@ -664,15 +644,9 @@ export const register: Register = (on, options) => {
     const id = e.agentId
     const now = await $.clock.now()
     if (!id) {
-      const [t, cards, cost] = await Promise.all([getTurn($), getCards($), costNow($)])
-      const r = receiptOf(t, {
-        durationMs: e.durationMs,
-        agentsSince: cards.filter(c => c.spawnedAt >= t.startedAt).length,
-        costNow: cost,
-        reason: e.reason,
-      })
-      await update($, receipt, () => r)
+      await update($, turn, t => ({ ...normalize(DEFAULT_TURN, t), endedAt: now }))
       await update($, main, m => ({ ...normalize(DEFAULT_MAIN, m), isRunning: false }))
+      await noteBranch($)
       await refreshStatus($, cfg)
       return done
     }
@@ -688,9 +662,6 @@ export const register: Register = (on, options) => {
           .map(normalizeCard)
           .map(c => (c.id === id ? { ...c, status, endedAt: now, answer: shorten(redact(e.answer), 400) } : c)),
       )
-      // This run's own length: a resumed agent's card clock also spans the idle time between runs.
-      const took = fmtDuration(e.durationMs)
-      await say($, await whoIs($, id), status === 'done' ? `xong · ${took}` : vi(status), status === 'done' ? 'done' : 'error', id)
     } else {
       await update($, loops, l => listOf<Loop>(l).map(x => (x.id === id ? { ...x, isDone: true, lastAt: now } : x)))
     }
@@ -729,16 +700,14 @@ export const register: Register = (on, options) => {
     const hasClock = hasClient && !faulted.has(faultKey(e.surface, 'elapsed.tsx'))
     const hasMascot = hasClient && !faulted.has(faultKey(e.surface, 'mascot.tsx'))
     const hasEta = hasClient && !faulted.has(faultKey(e.surface, 'eta.tsx'))
-    const [m, u, a, g, cards, lp, lines, t, r, v, now, mono, tkRaw] = await Promise.all([
+    const [m, u, a, g, cards, lp, t, v, now, mono, tkRaw] = await Promise.all([
       getMain($),
       getUsage($),
       getArchitect($),
       getGate($),
       getCards($),
       getLoops($),
-      getLog($),
       getTurn($),
-      read($, receipt),
       getView($),
       $.clock.now(),
       (monoRead ??= readMono($)),
@@ -761,6 +730,11 @@ export const register: Register = (on, options) => {
     const viewed = e.props.view?.agentId ?? null
     const advising = isAdvising(a)
     const running = cards.filter(c => c.status === 'running')
+    // The turn's work: the main loop's tokens, and every agent that started in it.
+    const workCards = cards.filter(c => c.spawnedAt >= t.startedAt)
+    const mainUsed = countOf(t.used)
+    const agentsUsed = workCards.reduce((n, c) => n + sumTokens(countOf(c.used)), 0)
+    const workTotal = sumTokens(mainUsed) + agentsUsed
     const showArchitect = a.consults.length > 0 || a.ids.length > 0
     const motion = cfg.motion && hasRail
     // A panel with nothing to show yet takes no room: most sessions never spawn an agent.
@@ -771,8 +745,8 @@ export const register: Register = (on, options) => {
       gate: g.recent.length === 0 && gateSummary(g).total === 0,
       agents: cards.length === 0,
       loops: lp.length === 0,
-      receipt: !m.isRunning && !r,
-      log: false,
+      // The mock clock of a test starts at 0, so "a turn has started" is running or a start time, not the time alone.
+      work: !m.isRunning && t.startedAt <= 0,
     }
     const panels = cfg.panels.filter(p => !isEmpty[p])
     const decider = m.mode === 'auto' ? 'phân loại' : 'bạn'
@@ -868,80 +842,97 @@ export const register: Register = (on, options) => {
       )
     }
 
-    // ---- main
+    // ---- main: the model, its branch and the meters that matter, drawn large
     const effortN = { low: 1, medium: 2, high: 3, xhigh: 4, max: 4 }[m.effort] ?? 0
     const ctxFill = contextFill(u)
-    const ctxGauge = ctxFill.pct !== null ? gauge(ctxFill.pct, 10) : null
-    const mainPanel = (w: number) => (
-      <Box flexDirection="column" borderStyle="round" borderColor={C.main} paddingX={1} width={w}>
-        <Box justifyContent="space-between">
-          <Text color={C.main} bold wrap="truncate">
-            {modelName} · chính
+    // A meter stays in the main colour while there is room, goes amber from 60% and red from 85%.
+    const level = (pct: number) => (pct >= 85 ? C.warn : pct >= 60 ? C.amber : C.main)
+    const mainPanel = (w: number) => {
+      const iw = w - 4
+      const LABEL = 9
+      // A wide pane has room for what each meter adds (the window's tokens, the time to its reset); a narrow
+      // one keeps the bar and the percentage. The bar takes whatever the other columns leave.
+      const tailW = iw >= 50 ? 18 : iw >= 34 ? 10 : 0
+      const gw = Math.max(4, Math.min(30, iw - LABEL - 4 - 2 - (tailW > 0 ? tailW + 1 : 0)))
+      const meter = (key: string, label: string, pct: number | null, tail: string) => {
+        const lg = bar(pct ?? 0, gw)
+        const c = pct === null ? C.faint : level(pct)
+        return (
+          <Box key={key} width={iw} columnGap={1} overflow="hidden">
+            <Box width={LABEL} flexShrink={0}>
+              <Text dimColor bold>
+                {label}
+              </Text>
+            </Box>
+            <Box width={gw} flexShrink={0}>
+              <Text color={c}>{lg.on}</Text>
+              <Text color={C.faint}>{lg.off}</Text>
+            </Box>
+            <Box width={4} flexShrink={0} justifyContent="flex-end">
+              <Text bold color={c}>
+                {pct === null ? '—' : `${Math.round(pct)}%`}
+              </Text>
+            </Box>
+            {tailW > 0 ? (
+              <Box width={tailW} flexShrink={0}>
+                <Text dimColor wrap="truncate">
+                  {tail}
+                </Text>
+              </Box>
+            ) : null}
+          </Box>
+        )
+      }
+      return (
+        <Box flexDirection="column" borderStyle="double" borderColor={C.main} paddingX={1} width={w}>
+          <Box width={iw} justifyContent="space-between">
+            <Text color={C.main} bold wrap="truncate">
+              {`✦ ${modelName.toUpperCase()}`}
+            </Text>
+            <Box flexShrink={0}>
+              <Text color={m.isRunning ? C.main : C.dim} bold>
+                {m.isRunning ? '● ĐANG LÀM VIỆC' : '○ RẢNH'}
+              </Text>
+            </Box>
+          </Box>
+          {line(
+            [
+              m.branch ? { spans: [{ text: `⎇ ${shorten(m.branch, 26)}`, color: C.arch, bold: true }] } : null,
+              {
+                spans: [
+                  { text: 'effort ', dim: true },
+                  { text: `${'▮'.repeat(effortN) + '▯'.repeat(4 - effortN)} `, color: C.main },
+                  { text: m.effort || '—', color: C.main, bold: true },
+                ],
+              },
+              m.mode ? { spans: [{ text: `chế độ `, dim: true }, { text: m.mode, bold: true }] } : null,
+            ],
+            iw,
+            3,
+          )}
+          <Text color={C.faint} wrap="truncate">
+            {'╌'.repeat(iw)}
           </Text>
-          <Box flexShrink={0}>
-            <Text color={m.isRunning ? C.main : C.dim}>{m.isRunning ? '● đang làm' : '○ rảnh'}</Text>
+          {meter('ctx', 'NGỮ CẢNH', ctxFill.pct, u.tokens !== null ? `${kTokens(u.tokens)}/${kTokens(ctxFill.window)}${u.compactions > 0 ? ` ${compactMark(u)}` : ''}` : '')}
+          {u.limits.slice(0, 2).map((l, i) => meter(`limit-${i}`, limitLabel(l.kind).toUpperCase(), l.pct, fmtResetIn(l.resetsAt, now) ? `↻ ${fmtResetIn(l.resetsAt, now)}` : ''))}
+          <Box width={iw} columnGap={1} overflow="hidden">
+            <Box width={LABEL} flexShrink={0}>
+              <Text dimColor bold>
+                CHI PHÍ
+              </Text>
+            </Box>
+            <Box flexShrink={0}>
+              <Text bold color={C.text}>
+                {u.costUsd !== null ? fmtUsd(u.costUsd) : '—'}
+              </Text>
+            </Box>
+            <Text dimColor wrap="truncate">
+              {`· ${m.steps} yêu cầu${m.speed ? ` · ${fmtSpeed(m.speed)}` : ''}`}
+            </Text>
           </Box>
         </Box>
-        {line(
-          [
-            {
-              spans: [
-                { text: 'effort ', dim: true },
-                { text: `${'▮'.repeat(effortN) + '▯'.repeat(4 - effortN)} `, color: C.main },
-                { text: m.effort || '—', color: C.main, bold: true },
-              ],
-            },
-            m.mode ? { spans: [{ text: `chế độ ${m.mode}`, dim: true }] } : null,
-            { spans: [{ text: `${m.steps} yêu cầu`, dim: true }] },
-          ],
-          w - 4,
-          3,
-        )}
-        {ctxGauge
-          ? line(
-              [
-                {
-                  spans: [
-                    { text: 'ctx ', dim: true },
-                    { text: ctxGauge.on, color: ctxFill.pct !== null && ctxFill.pct >= 80 ? C.warn : C.main },
-                    { text: ctxGauge.off, color: C.faint },
-                    { text: ` ${Math.round(ctxFill.pct ?? 0)}%`, bold: true },
-                  ],
-                },
-                u.tokens !== null ? { spans: [{ text: `${kTokens(u.tokens)}/${kTokens(ctxFill.window)}`, dim: true }] } : null,
-                u.compactions > 0 ? { spans: [{ text: compactMark(u), color: C.amber }], lead: 1 } : null,
-                // Left out first when the line is short; the ~ in the mark still says it.
-                u.compactions > 0 && u.isCompactEstimate ? { spans: [{ text: '(ước tính)', color: C.faint }] } : null,
-              ],
-              w - 4,
-            )
-          : null}
-        {u.costUsd !== null || u.limits.length > 0
-          ? line(
-              [
-                u.costUsd !== null ? { spans: [{ text: fmtUsd(u.costUsd), color: C.text }] } : null,
-                ...u.limits.slice(0, 2).map((l, i): Piece => {
-                  const lg = gauge(l.pct, 5)
-                  // The time to each reset where the line has room for it: both windows fit from 56 columns,
-                  // so a wide pane's half column (59 at 120) has them; a window that doesn't fit is left out.
-                  const resetIn = w >= 56 ? fmtResetIn(l.resetsAt, now) : ''
-                  return {
-                    lead: i > 0 ? 1 : u.costUsd !== null ? 2 : 0,
-                    spans: [
-                      { text: `${limitLabel(l.kind)} `, dim: true },
-                      { text: lg.on, color: l.pct >= 80 ? C.warn : C.main },
-                      { text: lg.off, color: C.faint },
-                      { text: ` ${Math.round(l.pct)}%${resetIn ? ` ↻${resetIn}` : ''}`, dim: true },
-                    ],
-                  }
-                }),
-              ],
-              w - 4,
-            )
-          : null}
-        {m.speed ? <Text dimColor wrap="truncate">{`yêu cầu gần nhất  ${fmtSpeed(m.speed)}`}</Text> : null}
-      </Box>
-    )
+      )
+    }
 
     // ---- tokens: what the API reported, kept between sessions; today's count starts over at midnight
     const tokensPanel = (w: number) => {
@@ -1290,73 +1281,79 @@ export const register: Register = (on, options) => {
       )
     }
 
-    // ---- receipt: the turn now, or the last one
-    const receiptPanel = (w: number) => {
-      const isReview = t.isReviewing
+    // ---- work: what the turn now (or the last one) cost in tokens, the main loop's and each agent's that ran in it
+    const work = (() => {
+      const rows = [
+        { key: 'main', label: 'main', c: mainUsed, mark: m.isRunning ? '◐' : '✓', color: C.main },
+        ...workCards.map(c => ({ key: c.id, label: cardTitle(c), c: countOf(c.used), mark: glyph(c), color: statusColor(c) })),
+      ]
+      return { rows, total: workTotal }
+    })()
+    const workPanel = (w: number) => {
+      const iw = w - 4
+      const showBar = iw >= 30
+      const showTail = iw >= 54
+      const lw = showTail ? 14 : Math.max(6, iw - 9 - (showBar ? 7 : 0))
       return (
-        <Box flexDirection="column" borderStyle="round" borderColor={C.main} borderDimColor={!m.isRunning && !isReview} paddingX={1} width={w}>
-          {m.isRunning ? (
-            <Box width={w - 4} columnGap={1} overflow="hidden">
-              <Text color={C.main} wrap="truncate">{`◐ quay lại ${modelName.toLowerCase()} · lượt`}</Text>
-              <Box flexShrink={0}>{clock('turn-clock', t.startedAt, null, C.main)}</Box>
-              {w >= 60 ? <Text dimColor wrap="truncate">{`· ${plural(t.edits, 'edit')} · ${plural(t.errors, 'error')}`}</Text> : null}
+        <Box flexDirection="column" borderStyle="round" borderColor={C.amber} paddingX={1} width={w}>
+          <Box width={iw} justifyContent="space-between" columnGap={1}>
+            <Text color={C.amber} bold wrap="truncate">
+              {iw >= 30 ? 'LẦN LÀM VIỆC · token' : 'TOKEN LẦN NÀY'}
+            </Text>
+            <Box flexShrink={0} columnGap={1}>
+              <Text color={m.isRunning ? C.main : C.gate}>{m.isRunning ? '● đang chạy' : '✓ xong'}</Text>
+              {clock('work-clock', t.startedAt, m.isRunning ? null : (t.endedAt ?? now), C.dim)}
             </Box>
-          ) : r ? (
-            line(
-              [
-                { spans: [{ text: r.reason === 'answer' ? '✓' : '✗', color: r.reason === 'answer' ? C.gate : C.warn }] },
-                {
-                  spans: [{ text: `lượt trước ${fmtDuration(r.durationMs)} · ${plural(r.agents, 'agent')} · ${plural(r.edits, 'edit')} · ${plural(r.errors, 'error')}` }],
-                  fill: true,
-                },
-                r.costDelta !== null ? { spans: [{ text: `· +${fmtUsd(r.costDelta)}`, color: C.main }] } : null,
-              ],
-              w - 4,
+          </Box>
+          {work.rows.map(r => {
+            const sum = sumTokens(r.c)
+            const share = work.total > 0 ? bar((sum / work.total) * 100, 6) : bar(0, 6)
+            return (
+              <Box key={`work-${r.key}`} width={iw} columnGap={1} overflow="hidden">
+                <Box width={1} flexShrink={0}>
+                  <Text color={r.color}>{r.mark}</Text>
+                </Box>
+                <Box width={lw} flexShrink={0}>
+                  <Text color={r.key === 'main' ? C.main : C.text} bold={r.key === 'main'} wrap="truncate">
+                    {shorten(r.label, lw)}
+                  </Text>
+                </Box>
+                <Box width={6} flexShrink={0} justifyContent="flex-end">
+                  <Text bold>{fmtTok(sum)}</Text>
+                </Box>
+                {showBar ? (
+                  <Box width={6} flexShrink={0}>
+                    <Text color={r.color}>{share.on}</Text>
+                    <Text color={C.faint}>{share.off}</Text>
+                  </Box>
+                ) : null}
+                {showTail ? (
+                  <Text dimColor wrap="truncate">{`vào ${fmtTok(r.c.fresh)} · ra ${fmtTok(r.c.out)} · cache ${fmtTok(r.c.cache)}`}</Text>
+                ) : null}
+              </Box>
             )
-          ) : (
-            <Text color={C.faint}>chưa có lượt nào xong</Text>
-          )}
-          {isReview ? (
-            <Text color={C.arch} wrap="wrap">
-              {`${cfg.architectLabel.toLowerCase()} đang rà soát trước khi xong (suy đoán)`}
+          })}
+          {workCards.length === 0 ? (
+            <Text color={C.faint} wrap="truncate">
+              chưa chạy agent nào trong lần này
             </Text>
           ) : null}
+          <Box width={iw} columnGap={1} overflow="hidden">
+            <Box width={1 + 1 + lw} flexShrink={0}>
+              <Text dimColor bold>
+                tổng
+              </Text>
+            </Box>
+            <Box width={6} flexShrink={0} justifyContent="flex-end">
+              <Text bold color={C.amber}>
+                {fmtTok(work.total)}
+              </Text>
+            </Box>
+            {showBar ? <Text dimColor wrap="truncate">{`main ${fmtTok(sumTokens(mainUsed))} · ${plural(workCards.length, 'agent')} ${fmtTok(agentsUsed)}`}</Text> : null}
+          </Box>
         </Box>
       )
     }
-
-    // ---- log: whatever rows the other panels leave, 4 to 8
-    // The main box's speed line, the legend's gap and the gap above the log are a row each.
-    const used = 2 + legendGap + 5 + (m.speed ? 1 : 0) + 1 + (showArchitect ? 6 : 0) + 6 + (v.gateOpen ? 5 : 0) + (cards.length > cfg.maxCards ? 6 + Math.min(6, cards.length) + cards.slice(-6).filter(c => c.status === 'running' && c.tools.length > 0).length : 11) + (expandedCard ? 8 : 0) + (lp.length ? 1 : 0) + 3 + (panels.includes('tokens') ? 6 : 0) + 2
-    const bodyRows = e.props.scroll?.bodyRows ?? e.viewport?.rows ?? 40
-    const nLog = logRows(bodyRows, used)
-    const shownLines = (viewed ? lines.filter(l => l.agentId === viewed) : lines).slice(-nLog)
-    const colorOf = (l: LogLine) =>
-      l.kind === 'error' ? C.warn : l.kind === 'consult' ? C.arch : l.who === 'main' ? C.main : l.who === 'gate' ? C.gate : l.who === 'you' ? C.text : C.agent
-    // Below 40 columns a line keeps its minute, not its second, and a shorter name.
-    const logPanel = (w: number) => (
-      <Box flexDirection="column" borderStyle="round" borderColor={C.faint} paddingX={1} marginTop={1} width={w}>
-        <Text dimColor wrap="truncate">
-          {viewed ? 'nhật ký phiên · agent này' : 'nhật ký phiên'}
-        </Text>
-        {shownLines.length === 0 ? <Text color={C.faint}>chưa có gì</Text> : null}
-        {shownLines.map(l => (
-          <Box>
-            <Box width={w < 40 ? 6 : 9} flexShrink={0}>
-              <Text color={C.faint}>{w < 40 ? fmtClock(l.at).slice(0, 5) : fmtClock(l.at)}</Text>
-            </Box>
-            <Box width={w < 40 ? 9 : 13} flexShrink={0}>
-              <Text color={colorOf(l)} bold wrap="truncate">
-                {l.who}
-              </Text>
-            </Box>
-            <Text color={l.kind === 'error' ? C.warn : C.text} wrap="truncate">
-              {l.text}
-            </Text>
-          </Box>
-        ))}
-      </Box>
-    )
 
     const draw = (p: Panel, w: number) =>
       p === 'main'
@@ -1371,9 +1368,7 @@ export const register: Register = (on, options) => {
                 ? agentsPanel(w)
                 : p === 'loops'
                   ? loopsPanel(w)
-                  : p === 'receipt'
-                    ? receiptPanel(w)
-                    : logPanel(w)
+                  : workPanel(w)
 
     // Panels with the flow between them; the agents panel draws its own rails.
     const column = (ps: Panel[], w: number) => {
@@ -1383,7 +1378,7 @@ export const register: Register = (on, options) => {
           {ps.map((p, i) => {
             const prev = ps[i - 1]
             const link =
-              i === 0 || p === 'tokens' || p === 'agents' || p === 'log' || p === 'loops' || prev === 'loops'
+              i === 0 || p === 'tokens' || p === 'agents' || p === 'loops' || prev === 'loops'
                 ? null
                 : rail(`link-${p}`, p === 'architect' ? advising : m.isRunning, p === 'architect' ? C.arch : C.main, w)
             return (
@@ -1497,9 +1492,9 @@ export const register: Register = (on, options) => {
             <Text color={C.faint} wrap="truncate">{`+${cards.length - live.length} agent nữa · /flightdeck layout compact để xem tất cả`}</Text>
           ) : null}
           {lp.length > 0 ? <Text dimColor wrap="truncate">{`vòng lặp khác ${lp.length} · ${lp.filter(l => isLoopActive(l, now)).length} đang chạy`}</Text> : null}
-          {!m.isRunning && r ? (
+          {t.startedAt > 0 ? (
             <Text dimColor wrap="truncate">
-              {`lượt trước ${fmtDuration(r.durationMs)} · ${plural(r.agents, 'agent')} · ${plural(r.edits, 'edit')} · ${plural(r.errors, 'error')}${r.costDelta !== null ? ` · +${fmtUsd(r.costDelta)}` : ''}`}
+              {`lần này ${fmtTok(workTotal)} token · main ${fmtTok(sumTokens(mainUsed))} · ${plural(workCards.length, 'agent')} ${fmtTok(agentsUsed)}`}
             </Text>
           ) : null}
         </Box>
@@ -1520,9 +1515,8 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         <Box columnGap={2}>
           {column(panels.filter(p => p === 'main' || p === 'tokens' || p === 'architect' || p === 'gate'), colW)}
-          {column(panels.filter(p => p === 'agents' || p === 'loops' || p === 'receipt'), colW)}
+          {column(panels.filter(p => p === 'agents' || p === 'loops' || p === 'work'), colW)}
         </Box>
-        {panels.includes('log') ? logPanel(W) : null}
       </Box>
     ) : (
       column(panels, W)
@@ -1550,25 +1544,26 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column" width={W}>
-        {/* Below 40 columns the frame's own title names the pane, so the header starts at the model. */}
-        {line(
-          [
-            W >= 40 ? { spans: [{ text: 'FLIGHTDECK', bold: true }, { text: ' ·', color: C.dim, bold: true }] } : null,
-            { spans: [{ text: modelName.toUpperCase(), color: C.main, bold: true }, { text: m.isRunning ? ' LÀM VIỆC' : ' RẢNH', bold: true }] },
-            showArchitect
-              ? {
-                  spans: [
-                    { text: '· ', color: C.dim, bold: true },
-                    { text: cfg.architectLabel, color: C.arch, bold: true },
-                    { text: advising ? ' ĐANG TƯ VẤN' : ' SẴN SÀNG', bold: true },
-                  ],
-                }
-              : null,
-          ],
-          W,
-          1,
-          'center',
-        )}
+        {/* The main box below names the model and what it is doing; the header only names the pane (below 40 columns the frame's own title does) and the architect. */}
+        {W >= 40 || showArchitect
+          ? line(
+              [
+                W >= 40 ? { spans: [{ text: 'FLIGHTDECK', bold: true }] } : null,
+                showArchitect
+                  ? {
+                      spans: [
+                        { text: W >= 40 ? '· ' : '', color: C.dim, bold: true },
+                        { text: cfg.architectLabel, color: C.arch, bold: true },
+                        { text: advising ? ' ĐANG TƯ VẤN' : ' SẴN SÀNG', bold: true },
+                      ],
+                    }
+                  : null,
+              ],
+              W,
+              1,
+              'center',
+            )
+          : null}
         <Box key="legend" justifyContent="center" columnGap={2} marginBottom={legendGap}>
           {legend.map(l => (
             <Box flexShrink={0}>

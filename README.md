@@ -4,6 +4,8 @@ Bản fork của [Flightdeck](https://github.com/scasella/claude-flightdeck) (St
 
 ## Thêm gì so với bản gốc
 
+- **Khung chính lớn**: model, nhánh git (`⎇`), effort, chế độ, rồi mỗi chỉ số một hàng có nhãn và thanh dày: `NGỮ CẢNH`, `5H`, `7D` (đổi sang vàng từ 60% và đỏ từ 85%, kèm token của cửa sổ và thời gian đến lúc reset), `CHI PHÍ`. Nhánh đọc từ `.git/HEAD` ở thư mục phiên (hỗ trợ cả worktree), cập nhật mỗi lượt.
+- **Hộp `LẦN LÀM VIỆC · token`**: lượt hiện tại (hoặc lượt vừa xong) đã tốn bao nhiêu token: một hàng cho `main` và một hàng cho mỗi agent đã chạy trong lượt đó, mỗi hàng có thanh tỷ lệ và `vào / ra / cache`, cuối cùng là `tổng`. Sang lượt mới thì đếm lại. Thay cho bảng "lượt trước" và "nhật ký phiên" của bản gốc, hai bảng này đã bỏ.
 - **Hộp `TOKEN · đã dùng`**: `hôm nay`, `tổng` (từ ngày dùng đầu tiên) và `cao nhất` (ngày dùng nhiều token nhất), mỗi dòng tách `vào / ra / cache`. Đếm mọi request của main, subagent và fork; lưu giữa các phiên.
 - **Mascot Clawd**: khi main hoặc agent nào đó đang chạy, Clawd ngồi trước laptop mở, code cuộn trên màn hình, tay gõ phím. Khi rảnh, laptop gập lại, ly cà phê bốc khói, Clawd quay đầu nhìn quanh, chớp mắt, ngủ gật.
 - **Chào và chú thích**: toast chào khi mở phiên; dưới mascot là `● Claude đang code · agent ◐ <tên>` lúc làm việc, hoặc lời chào theo giờ (`Chào buổi chiều, …!`) lúc rảnh.
@@ -46,10 +48,10 @@ Trong `/config`, hoặc `pluginConfigs["flightdeck-plus@flightdeck-plus"].option
 | Option | Mặc định | Ý nghĩa |
 | --- | --- | --- |
 | `userName` | trống | tên Clawd dùng để chào bạn; để trống thì chào chung |
-| `panels` | `main,tokens,architect,gate,agents,loops,receipt,log` | các bảng theo thứ tự; bỏ `tokens` để ẩn hộp token |
+| `panels` | `main,tokens,architect,gate,agents,loops,work` | các bảng theo thứ tự (`work` là hộp token của lần làm việc); bỏ một tên để ẩn bảng đó |
 | `motion` | `while-active` | `off` tắt cả mascot lẫn đường nối động |
 
-Trong layout inline (8 dòng phía trên ô nhập) chỉ có thêm `hôm nay X` ở dòng đầu; hộp token, mascot và lời chào nằm ở pane gắn cạnh, từ 28 cột.
+Trong layout inline (8 dòng phía trên ô nhập) chỉ có thêm `hôm nay X` ở dòng đầu và một dòng `lần này … token`; khung chính lớn, hộp token, mascot và lời chào nằm ở pane gắn cạnh, từ 28 cột.
 
 ## Phát triển
 
@@ -59,7 +61,7 @@ claude plugin validate .
 claude plugin test .
 ```
 
-Bộ test thừa hưởng từ bản gốc còn 20 test cũ khẳng định chuỗi tiếng Anh nên fail từ khi giao diện sang tiếng Việt; các test của phần thêm vào đều qua.
+Bộ test thừa hưởng từ bản gốc còn 19 test cũ khẳng định chuỗi tiếng Anh nên fail từ khi giao diện sang tiếng Việt; các test của phần thêm vào đều qua.
 
 ## Giấy phép
 

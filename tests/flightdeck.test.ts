@@ -9,7 +9,12 @@ import {
   DEFAULT_USAGE,
   COMPACT_TRIES,
   addCard,
+  addCount,
   addTokens,
+  bar,
+  branchOf,
+  countOf,
+  tokensOf,
   dayKey,
   fmtDay,
   fmtTok,
@@ -44,19 +49,15 @@ import {
   lanes,
   limitLabel,
   limitOf,
-  logRows,
   marksIn,
   momentOf,
   normalizeCard,
   normalizeGate,
-  normalizeLog,
   titleLines,
   parseConfig,
   prettyModel,
-  promptLine,
   handbackOf,
   adviceLine,
-  receiptOf,
   recordCheck,
   redact,
   settleCheck,
@@ -225,24 +226,23 @@ test('consults open, close by id, and draw on a shared timeline', () => {
 
 test('config is read leniently: bad values fall back to defaults', () => {
   const d = parseConfig({})
-  expect([d.maxCards, d.paneColumns, d.layout, d.motion, d.moments, d.panels.length]).toEqual([3, 66, 'auto', true, true, 8])
+  expect([d.maxCards, d.paneColumns, d.layout, d.motion, d.moments, d.panels.length]).toEqual([3, 66, 'auto', true, true, 7])
   expect(d.architect.test('fable-advisor:fable-advisor')).toBe(true)
-  const c = parseConfig({ architectPattern: '([', maxCards: 99, layout: 'diagonal', panels: 'log, gate ,nope,gate', motion: 'off' })
+  const c = parseConfig({ architectPattern: '([', maxCards: 99, layout: 'diagonal', panels: 'work, gate ,nope,gate', motion: 'off' })
   expect(c.architect.test('advisor')).toBe(true) // invalid regex → default
   expect([c.maxCards, c.layout, c.motion]).toEqual([6, 'auto', false])
   expect([46.4, 12, Number.NaN, '90'].map(n => parseConfig({ paneColumns: n }).paneColumns)).toEqual([46, 40, 66, 66])
-  expect(c.panels).toEqual(['log', 'gate'])
+  expect(c.panels).toEqual(['work', 'gate'])
 })
 
 test('state saved under an older shape still reads', () => {
-  expect(normalizeLog([{ at: '08:00:00', who: 'jev', text: 'x' }])[0]).toEqual({ at: 0, who: 'jev', text: 'x', agentId: null, kind: 'info' })
   const g = normalizeGate({ file: { allow: 1 } }) // v1 gate shape
   expect(g.recent).toEqual([])
   expect(g.totals.shell.rule).toBe(0)
   expect(normalizeCard({ id: 'a', status: 'done' }).tools).toEqual([])
 })
 
-test('layout math: lanes share one axis, the log gets 4-8 rows, the legend never wraps', () => {
+test('layout math: lanes share one axis, the legend never wraps', () => {
   const cards = [
     { ...normalizeCard({}), id: 'a', spawnedAt: 1000, endedAt: 1050 },
     { ...normalizeCard({}), id: 'b', spawnedAt: 1050, endedAt: null },
@@ -251,7 +251,6 @@ test('layout math: lanes share one axis, the log gets 4-8 rows, the legend never
   expect(a).toEqual({ id: 'a', before: 0, bar: 10, after: 10 })
   expect(b?.before).toBe(10)
   expect((b?.before ?? 0) + (b?.bar ?? 0) + (b?.after ?? 0)).toBe(20)
-  expect([logRows(10, 40), logRows(50, 40), logRows(200, 40)]).toEqual([4, 7, 8])
   expect(fitLegend([{ label: 'main' }, { label: 'agents' }, { label: 'architect' }], 20).map(x => x.label)).toEqual(['main', 'agents'])
   expect([marksIn(64, true), marksIn(64, false), marksIn(6, false)]).toEqual([64, 42, 4])
   expect(limitLabel('five_hour')).toBe('5h')
@@ -262,7 +261,6 @@ test('layout math: lanes share one axis, the log gets 4-8 rows, the legend never
   expect(prettyModel('claude-3-opus-20240229')).toBe('Opus 3')
   expect(prettyModel('z-ai/glm-5.3-flash-with-a-long-name')).toBe('z-ai/glm-5.3-flash-wi…')
   expect(prettyModel('')).toBe('—')
-  expect(promptLine('fix the parser')).toEqual({ who: 'you', text: 'fix the parser' })
   const hb = '<agent-message from="a1940a83d593229d5">\n[Subagent hand-back] The text below is the final report. The report follows:\n  Add gate tests: redaction edge cases.\n  - more\n</agent-message>'
   expect(handbackOf(hb)).toEqual({ from: 'a1940a83d593229d5', body: 'Add gate tests: redaction edge cases.' })
   expect(handbackOf('<agent-message from="x">\nPlain report line\n</agent-message>')).toEqual({ from: 'x', body: 'Plain report line' })
@@ -270,11 +268,8 @@ test('layout math: lanes share one axis, the log gets 4-8 rows, the legend never
   expect(adviceLine('## Ship it after one more gate test.\n- details')).toBe('Ship it after one more gate test.')
   expect(adviceLine('[Subagent hand-back] header\n\n**Fix card overflow first**')).toBe('Fix card overflow first')
   expect(adviceLine('')).toBe('')
-  expect(promptLine('<agent-message from="a1492260715f3be7b"> [Subagent hand-back]')).toEqual({ who: 'engine', text: 'agent message from a1492260' })
-  expect(receiptOf({ ...DEFAULT_TURN, costAtStart: 5 }, { durationMs: 1, agentsSince: 0, costNow: 5, reason: 'answer' }).costDelta).toBe(null)
   expect(titleLines('Write tinyqueue test suite', 13, 16)).toEqual(['Write', 'tinyqueue test…'])
   expect(titleLines('Short', 13, 16)).toEqual(['Short', ''])
-  expect(receiptOf({ ...DEFAULT_TURN, costAtStart: 1, edits: 2 }, { durationMs: 1000, agentsSince: 3, costNow: 1.5, reason: 'answer' }).costDelta).toBe(0.5)
 })
 
 test('a request\'s speed is its time to the first piece of response, and no output rate', () => {
@@ -334,8 +329,9 @@ test('a fresh session draws on every surface and width, empty panels hidden', as
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     for (const cols of [40, 60, 86, 120]) {
       const ui = await $.ui.mount({ ...pane(cols), surface })
-      expect(await ui.find({ text: /· main$/ })).toBeDefined()
-      expect(await ui.find({ text: /session log/ })).toBeDefined()
+      expect(await ui.find({ text: /RẢNH/ })).toBeDefined()
+      expect(await ui.find({ text: /TOKEN/ })).toBeDefined() // the token box
+      expect(await ui.find({ text: /LẦN LÀM VIỆC|TOKEN LẦN NÀY/ })).toBeUndefined() // no turn yet: no work box
       expect(await ui.find({ text: /agents ·/ })).toBeUndefined() // no subagents: no agents panel
       expect(await ui.find({ text: /permissions/ })).toBeUndefined() // no checks yet: no gate panel
       await ui.unmount()
@@ -357,7 +353,6 @@ test('inline above the prompt, the pane is a summary of at most 8 rows', async (
     expect((root.children ?? []).filter(Boolean).length <= 8).toBe(true)
     expect(await ui.find({ text: /\+2 more agents/ })).toBeDefined()
     expect(await ui.find({ text: /1 allowed/ })).toBeDefined()
-    expect(await ui.find({ text: /session log/ })).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -418,23 +413,23 @@ test('cards fit 20 columns and a gap each, between one and the limit', () => {
   expect([cardsFit(24, 3), cardsFit(41, 3), cardsFit(62, 3), cardsFit(64, 3), cardsFit(120, 3), cardsFit(120, 6)]).toEqual([1, 2, 3, 3, 3, 5])
 })
 
-// #32: the receipt sat flush against swimlanes, or against an expanded card, with no connector between.
+// #32: the panel below the agents sat flush against swimlanes, or against an expanded card, with no connector between.
 test('the panel below the agents gets a connector unless the cards end on their merge rail', async ($, on) => {
   engine(on)
   let n = 0
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: `gp${++n}` }))
-  await $.turn.start({ text: 'fan out', turnId: 'GP1' }) // a turn running: the receipt shows below the agents
+  await $.turn.start({ text: 'fan out', turnId: 'GP1' }) // a turn running: the work box shows below the agents
   await $.agent.spawn(spawn('general-purpose', 'Write the parser tests'))
   await $.agent.spawn(spawn('Explore', 'Map the call sites'))
 
   const cardsUi = await $.ui.mount({ ...pane(64), surface: 'terminal' })
   expect(await cardsUi.find({ key: 'merge' })).toBeDefined()
-  expect(await cardsUi.find({ key: 'link-receipt' })).toBeUndefined() // the merge rail leads on
+  expect(await cardsUi.find({ key: 'link-work' })).toBeUndefined() // the merge rail leads on
   await cardsUi.press({ key: 'card-gp1' })
   expect(await cardsUi.find({ text: /^Write the parser tests$/ })).toBeDefined() // expanded below the cards
-  expect(await cardsUi.find({ key: 'link-receipt' })).toBeDefined()
+  expect(await cardsUi.find({ key: 'link-work' })).toBeDefined()
   await cardsUi.press({ key: 'card-gp1' })
-  expect(await cardsUi.find({ key: 'link-receipt' })).toBeUndefined()
+  expect(await cardsUi.find({ key: 'link-work' })).toBeUndefined()
   await cardsUi.unmount()
 
   await $.agent.spawn(spawn('general-purpose', 'Implement the parser'))
@@ -442,7 +437,7 @@ test('the panel below the agents gets a connector unless the cards end on their 
   for (const cols of [40, 64, 120]) {
     const lanesUi = await $.ui.mount({ ...pane(cols), surface: 'terminal' })
     expect(await lanesUi.find({ text: /━/ })).toBeDefined() // swimlanes
-    expect(await lanesUi.find({ key: 'link-receipt' })).toBeDefined()
+    expect(await lanesUi.find({ key: 'link-work' })).toBeDefined()
     await lanesUi.unmount()
   }
 })
@@ -591,7 +586,7 @@ test("a background architect's advice is read from its hand-back", async ($, on)
 })
 
 // From #35, thanks @ai94iq: the prompt line, an agent's task and answer, and advice were stored as they came.
-test('prompts, agent tasks and answers, and advice reach the pane masked and without control bytes', async ($, on) => {
+test('agent tasks and answers, and advice reach the pane masked and without control bytes', async ($, on) => {
   engine(on)
   let n = 0
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: `rd${++n}` }))
@@ -602,7 +597,7 @@ test('prompts, agent tasks and answers, and advice reach the pane masked and wit
   await $.turn.complete({ answer: 'Rotate password=hunter2 before shipping.', durationMs: 10, isAborted: false, turnId: 'RD3', agentId: 'rd2', reason: 'answer' })
   const ui = await $.ui.mount({ ...pane(64), surface: 'terminal' })
   await ui.press({ key: 'card-rd1' }) // the expanded card: the whole task and the answer
-  for (const text of [/^use ••• now$/, /^deploy with •••\[2J$/, /» key ••• done/, /» Rotate password=••• before shipping\./]) {
+  for (const text of [/^deploy with •••\[2J$/, /» key ••• done/, /» Rotate password=••• before shipping\./]) {
     expect(await ui.find({ text })).toBeDefined()
   }
   expect(await ui.find({ text: /IOSFODNN7|hunter2|\u001b/ })).toBeUndefined()
@@ -623,13 +618,15 @@ test('each rate-limit window shows the time to its reset where the main panel ha
   })
   for (const cols of [64, 120]) {
     const ui = await $.ui.mount({ ...pane(cols), surface: 'terminal' })
-    expect(await ui.find({ text: /19% ↻3h10m/ })).toBeDefined()
-    expect(await ui.find({ text: /3% ↻4d2h/ })).toBeDefined()
+    expect(await ui.find({ text: /^19%$/ })).toBeDefined()
+    expect(await ui.find({ text: /^↻ 3h10m$/ })).toBeDefined()
+    expect(await ui.find({ text: /^3%$/ })).toBeDefined()
+    expect(await ui.find({ text: /^↻ 4d2h$/ })).toBeDefined()
     await ui.unmount()
   }
-  const narrow = await $.ui.mount({ ...pane(40), surface: 'terminal' })
-  expect(await narrow.find({ text: /19%/ })).toBeDefined()
-  expect(await narrow.find({ text: /↻/ })).toBeUndefined() // no room: the gauges stay whole
+  const narrow = await $.ui.mount({ ...pane(30), surface: 'terminal' })
+  expect(await narrow.find({ text: /^19%$/ })).toBeDefined()
+  expect(await narrow.find({ text: /↻/ })).toBeUndefined() // no room: the bars stay whole
   await narrow.unmount()
 })
 
@@ -835,7 +832,7 @@ test('the gauge, status and inline summary measure against the compaction window
   for (const cols of [40, 64, 120]) {
     const ui = await $.ui.mount({ ...pane(cols), surface: 'terminal' })
     expect(await ui.find({ text: /200k\/400k/ })).toBeDefined()
-    expect(await ui.find({ text: / 50%/ })).toBeDefined()
+    expect(await ui.find({ text: /^50%$/ })).toBeDefined()
     expect(await ui.find({ text: /1\.0M/ })).toBeUndefined()
     await ui.unmount()
     const mini = await $.ui.mount({ ...pane(cols), props: { ...pane(cols).props, placement: 'inline' as const }, surface: 'terminal' })
@@ -845,8 +842,8 @@ test('the gauge, status and inline summary measure against the compaction window
   // Past 80% of the compaction window the gauge warns, though the model's window has room.
   await measure(340_000)
   const warn = await $.ui.mount({ ...pane(64), surface: 'terminal' })
-  expect((await warn.find({ type: 'Text', text: /^▰+$/ }))?.props.color).toBe('error')
-  expect(await warn.find({ text: / 85%/ })).toBeDefined()
+  expect((await warn.find({ type: 'Text', text: /^█+[▏▎▍▌▋▊▉]?$/ }))?.props.color).toBe('error')
+  expect(await warn.find({ text: /^85%$/ })).toBeDefined()
   await warn.unmount()
   // A model with a smaller window: read again, and a compaction window above it no longer counts.
   window = 200_000
@@ -871,7 +868,7 @@ const keepsModelWindow = (name: string, host: { compact: number | null; isEnable
     for (const cols of [40, 64, 120]) {
       const ui = await $.ui.mount({ ...pane(cols), surface: 'terminal' })
       expect(await ui.find({ text: /300k\/1\.0M/ })).toBeDefined()
-      expect(await ui.find({ text: / 30%/ })).toBeDefined()
+      expect(await ui.find({ text: /^30%$/ })).toBeDefined()
       await ui.unmount()
     }
   })
@@ -893,7 +890,7 @@ test('a resumed session reads its compaction window at start, and /clear leaves 
   expect(asked).toEqual([undefined, 'summary'])
   const resumed = await $.ui.mount({ ...pane(64), surface: 'terminal' })
   expect(await resumed.find({ text: /200k\/400k/ })).toBeDefined()
-  expect(await resumed.find({ text: / 50%/ })).toBeDefined()
+  expect(await resumed.find({ text: /^50%$/ })).toBeDefined()
   await resumed.unmount()
   // The gauge waits for the next measurement after a /clear; the compaction window is not asked again.
   await $.session.end({ reason: 'clear', sessionId: 's' } as never)
@@ -901,7 +898,7 @@ test('a resumed session reads its compaction window at start, and /clear leaves 
   expect(asked).toEqual([undefined, 'summary'])
   const cleared = await $.ui.mount({ ...pane(64), surface: 'terminal' })
   expect(await cleared.find({ text: /100k\/400k/ })).toBeDefined()
-  expect(await cleared.find({ text: / 25%/ })).toBeDefined()
+  expect(await cleared.find({ text: /^25%$/ })).toBeDefined()
   await cleared.unmount()
 })
 
@@ -926,7 +923,7 @@ test('a compaction-window read that fails is asked again at the next measurement
   expect(reads).toBe(2) // the failed read once more, then not again
   const read = await $.ui.mount({ ...pane(64), surface: 'terminal' })
   expect(await read.find({ text: /300k\/400k/ })).toBeDefined()
-  expect(await read.find({ text: / 75%/ })).toBeDefined()
+  expect(await read.find({ text: /^75%$/ })).toBeDefined()
   await read.unmount()
 })
 
@@ -1120,7 +1117,7 @@ test('switching to another model with the same window reads its compaction windo
   expect(reads).toBe(2)
   const ui = await $.ui.mount({ ...pane(64), surface: 'terminal' })
   expect(await ui.find({ text: /360k\/700k/ })).toBeDefined()
-  expect(await ui.find({ text: / 51%/ })).toBeDefined()
+  expect(await ui.find({ text: /^51%$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1519,7 +1516,7 @@ const facesAt = async ($: Parameters<TestBody>[0], on: On, version: string | nul
       const tree = await ui.drawn()
       monoTexts(tree, named, surface)
       walkLines(tree)
-      for (const key of ['link-gate', 'link-receipt']) {
+      for (const key of ['link-gate', 'link-work']) {
         if ((await ui.find({ key }))?.type !== 'Client') continue
         const rail = await ui.drawn({ in: key })
         monoTexts(rail, named, `${surface}:${key}`)
@@ -1626,7 +1623,7 @@ test('token counts read short, the day is the local one, the hello follows the h
   expect(parseConfig({ userName: '  Nhung ' }).userName).toBe('Nhung')
   expect(parseConfig({}).userName).toBe('')
   expect(parseConfig({}).panels).toContain('tokens')
-  expect(parseConfig({ panels: 'main,log' }).panels).toEqual(['main', 'log'])
+  expect(parseConfig({ panels: 'main,work' }).panels).toEqual(['main', 'work'])
 })
 
 test('the mascot keeps one size in every frame, types while working, and looks around, blinks and dozes while idle', () => {
@@ -1706,4 +1703,135 @@ test('the pane counts every model request on top of the imported history, and th
   const ui = await $.ui.mount({ ...pane(100), surface: 'terminal', props: { ...pane(100).props, placement: 'inline' } })
   expect(textOf(await ui.drawn())).toContain('hôm nay 1.19k')
   await ui.unmount()
+})
+
+// ---------------------------------------------------------------- the main box, the work box, the branch
+
+test('a bar fills in eighths, a HEAD names its branch, and tokens add up per agent', () => {
+  expect(bar(50, 10)).toEqual({ on: '█████', off: '░░░░░' })
+  expect(bar(0, 4)).toEqual({ on: '', off: '░░░░' })
+  expect(bar(100, 4)).toEqual({ on: '████', off: '' })
+  expect(bar(37.5, 4)).toEqual({ on: '█▌', off: '░░' }) // 1.5 cells
+  expect(bar(250, 4).on).toBe('████') // never past its width
+  expect(branchOf('ref: refs/heads/feat/login\n')).toBe('feat/login')
+  expect(branchOf('ref: refs/remotes/origin/main')).toBe('remotes/origin/main')
+  expect(branchOf('0123456789abcdef0123456789abcdef01234567\n')).toBe('0123456')
+  expect(branchOf('')).toBe('')
+  expect(branchOf('garbage')).toBe('')
+  expect(tokensOf({ input_tokens: 10, cache_creation_input_tokens: 5, cache_read_input_tokens: 100, output_tokens: 7 })).toEqual({ fresh: 15, out: 7, cache: 100 })
+  expect(tokensOf(null)).toEqual({ fresh: 0, out: 0, cache: 0 })
+  const c = applyStep(normalizeCard({ id: 'a' }), { model: 'm', usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 90 }, stopReason: null })
+  const d = applyStep(c, { model: 'm', usage: { input_tokens: 20, output_tokens: 5, cache_read_input_tokens: 190 }, stopReason: null })
+  expect(countOf(d.used)).toEqual({ fresh: 30, out: 10, cache: 280 })
+  expect(d.out).toBe(10) // the card's own output count is unchanged
+  // A card saved before `used` existed, or with junk in it, reads as nothing and still adds.
+  expect(countOf(undefined)).toEqual({ fresh: 0, out: 0, cache: 0 })
+  expect(addCount({ fresh: 'x', out: 2 }, { fresh: 1, out: 1, cache: 1 })).toEqual({ fresh: 1, out: 3, cache: 1 })
+})
+
+test('the main box shows the model, branch, effort, mode and the meters, large; the branch is read from .git/HEAD above the session directory', async ($, on) => {
+  const clock = engine(on)
+  await clock.advance(Date.UTC(2026, 10, 19, 12))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'flightdeck' } }))
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.measure', (_$, e) => ({ changed: e.changed }))
+  on('session.cwd', () => ({ value: '/work/proj/src' }))
+  on('fs.read', (_$, e) => {
+    if (e.path === '/work/proj/.git/HEAD') return { value: 'ref: refs/heads/feat/login\n' }
+    throw new Error('ENOENT')
+  })
+  const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-opus-5-5' }
+  on('turn.step', async function* () {
+    yield { kind: 'stop' as const, stopReason: 'end_turn' as const, usage }
+    return { turnId: 'H1', index: 0, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage }
+  })
+  await $.session.start({ cwd: '/work/proj/src', surface: 'terminal', isInteractive: true })
+  const s = $.turn.step({ turnId: 'H1', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1 } as never)
+  for await (const _ of s) void _
+  await s.result
+  await $.session.measure({
+    context: { window: 200_000, tokens: 124_000, percent: 62 },
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: 31, resetsAt: new Date(clock.now() + 2 * 3_600_000 + 10 * 60_000).toISOString() },
+      { kind: 'seven_day', percentUsed: 90, resetsAt: new Date(clock.now() + 4 * 86_400_000).toISOString() },
+    ],
+    cost: { usd: 12.34 },
+    changed: ['context', 'rateLimits', 'cost'],
+  } as never)
+  for (const cols of [40, 64, 120]) {
+    const ui = await $.ui.mount({ ...pane(cols), surface: 'terminal' })
+    const text = textOf(await ui.drawn())
+    for (const want of ['✦ OPUS 5.5', '⎇ feat/login', 'NGỮ CẢNH', '5h'.toUpperCase(), '7D', 'CHI PHÍ', '$12.34', '62%', '31%', '90%']) expect(text).toContain(want)
+    // 90% is past the red mark, 62% past the amber one, 31% neither.
+    const colours = async (pct: string) => (await ui.find({ type: 'Text', text: new RegExp(`^${pct}%$`) }))?.props.color
+    expect([await colours('90'), await colours('62'), await colours('31')]).toEqual(['error', 'warning', 'claude'])
+    await ui.unmount()
+  }
+  // Wide enough for the tails: the window's tokens and the time to each reset.
+  const wide = await $.ui.mount({ ...pane(64), surface: 'terminal' })
+  const wideText = textOf(await wide.drawn())
+  expect(wideText).toContain('124k/200k')
+  expect(wideText).toContain('↻ 2h10m')
+  await wide.unmount()
+})
+
+test('the work box adds up what the turn cost: the main loop and each agent that started in it, and starts over with the next prompt', async ($, on) => {
+  const clock = engine(on)
+  await clock.advance(3_600_000)
+  let n = 0
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: `w${++n}` }))
+  const answers: Record<string, { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }> = {
+    main: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 },
+    w1: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 400, cache_creation_input_tokens: 0 },
+  }
+  on('turn.step', async function* (_$, e) {
+    const u = { ...answers[e.agentId ?? 'main']!, model: 'claude-opus-5-5' }
+    yield { kind: 'stop' as const, stopReason: 'end_turn' as const, usage: u }
+    return { turnId: e.turnId, index: 0, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: u }
+  })
+  const step = async (agentId?: string) => {
+    const s = $.turn.step({ turnId: 'W1', index: 0, model: 'claude-opus-5-5', messageCount: 1, ...(agentId ? { agentId } : {}) })
+    for await (const _ of s) void _
+    await s.result
+  }
+  const text = async (cols = 100) => {
+    const ui = await $.ui.mount({ ...pane(cols), surface: 'terminal' })
+    const t = textOf(await ui.drawn())
+    await ui.unmount()
+    return t
+  }
+  expect(await text()).not.toContain('LẦN LÀM VIỆC') // no turn yet: no box
+
+  await $.turn.start({ text: 'go', turnId: 'W1' })
+  expect(await text()).toContain('chưa chạy agent nào trong lần này')
+  await $.agent.spawn(spawn('general-purpose', 'Audit the parser'))
+  await step()
+  await step('w1')
+  await step('w1')
+  // main 1150; the agent 2 x 415 = 830; together 1980.
+  const t1 = await text()
+  expect(t1).toContain('LẦN LÀM VIỆC · token')
+  expect(t1).toContain('● đang chạy')
+  expect(t1).toContain('1.15k')
+  expect(t1).toContain('830')
+  expect(t1).toContain('1.98k')
+  expect(t1).toContain('vào 20 · ra 10 · cache 800')
+  expect(t1).toMatch(/Audit the/)
+  expect(t1).toContain('main 1.15k · 1 agent 830')
+
+  await $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'W1', reason: 'answer' })
+  expect(await text()).toContain('✓ xong') // the finished work stays on show
+  // Inline above the prompt: one line.
+  const ui = await $.ui.mount({ ...pane(100), surface: 'terminal', props: { ...pane(100).props, placement: 'inline' } })
+  expect(textOf(await ui.drawn())).toContain('lần này 1.98k token · main 1.15k · 1 agent 830')
+  await ui.unmount()
+
+  // The next prompt: the main loop's count starts over, and the earlier agent is not part of this work.
+  await clock.advance(5000)
+  await $.turn.start({ text: 'again', turnId: 'W2' })
+  const t2 = await text()
+  expect(t2).toContain('chưa chạy agent nào trong lần này')
+  expect(t2).not.toContain('1.98k')
 })

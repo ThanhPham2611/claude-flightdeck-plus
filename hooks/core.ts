@@ -9,11 +9,9 @@ import type {
   Count,
   Gate,
   Layout,
-  LogLine,
   Loop,
   Main,
   Moment,
-  Receipt,
   Roster,
   Tally,
   ToolNote,
@@ -27,7 +25,7 @@ export const SCHEMA_VERSION = 2
 
 // ---------------------------------------------------------------- defaults
 
-export const DEFAULT_MAIN: Main = { model: '', effort: '', mode: '', steps: 0, isRunning: false, speed: null }
+export const DEFAULT_MAIN: Main = { model: '', effort: '', mode: '', steps: 0, isRunning: false, speed: null, branch: '' }
 export const DEFAULT_USAGE: Usage = {
   pct: null,
   tokens: null,
@@ -46,7 +44,7 @@ export const DEFAULT_USAGE: Usage = {
 export const DEFAULT_ARCHITECT: Architect = { consults: [], ids: [], seen: [], lastAdvice: '' }
 const ZERO: Tally = { rule: 0, ask: 0, cleared: 0, deny: 0 }
 export const DEFAULT_GATE: Gate = { recent: [], totals: { file: ZERO, shell: ZERO, other: ZERO } }
-export const DEFAULT_TURN: Turn = { edits: 0, errorStreak: 0, errors: 0, isReviewing: false, startedAt: 0, costAtStart: null }
+export const DEFAULT_TURN: Turn = { edits: 0, errorStreak: 0, errors: 0, isReviewing: false, startedAt: 0, endedAt: null, used: { fresh: 0, out: 0, cache: 0 } }
 export const DEFAULT_VIEW: View = { expanded: null, gateOpen: null, layout: null }
 export const DEFAULT_ROSTER: Roster = { architectTypes: [] }
 
@@ -80,6 +78,7 @@ export const normalizeCard = (stored: unknown): AgentCard =>
       endedAt: null,
       ctx: 0,
       out: 0,
+      used: { fresh: 0, out: 0, cache: 0 },
       steps: 0,
       lastStop: null,
       tools: [],
@@ -88,19 +87,10 @@ export const normalizeCard = (stored: unknown): AgentCard =>
     stored,
   )
 
-export const normalizeLog = (stored: unknown): LogLine[] =>
-  listOf<Record<string, unknown>>(stored).map(l => ({
-    at: typeof l.at === 'number' ? l.at : 0,
-    who: String(l.who ?? ''),
-    text: String(l.text ?? ''),
-    agentId: typeof l.agentId === 'string' ? l.agentId : null,
-    kind: l.kind === 'error' || l.kind === 'consult' || l.kind === 'done' ? l.kind : 'info',
-  }))
-
 // ---------------------------------------------------------------- config
 
-export type Panel = 'main' | 'tokens' | 'architect' | 'gate' | 'agents' | 'loops' | 'receipt' | 'log'
-const PANELS: readonly Panel[] = ['main', 'tokens', 'architect', 'gate', 'agents', 'loops', 'receipt', 'log']
+export type Panel = 'main' | 'tokens' | 'architect' | 'gate' | 'agents' | 'loops' | 'work'
+const PANELS: readonly Panel[] = ['main', 'tokens', 'architect', 'gate', 'agents', 'loops', 'work']
 
 export type Config = {
   architect: RegExp
@@ -266,14 +256,23 @@ export const mergeDays = (a: Record<string, Count>, b: Record<string, Count>): R
   return out
 }
 
-/** One model response's usage added to `day`. Cache reads are kept apart: they re-count the context at every step. */
+/** One model response's usage as the box counts it: new input (input + cache writes), output, and cache reads, which re-count the context at every step. */
+export const tokensOf = (u: StepUsage): Count => ({
+  fresh: num(u?.input_tokens) + num(u?.cache_creation_input_tokens),
+  out: num(u?.output_tokens),
+  cache: num(u?.cache_read_input_tokens),
+})
+
+/** A stored count read as one: fields that are not numbers are nothing, a missing count is all zero (older state). */
+export const countOf = (v: unknown): Count => count(v)
+
+/** `a` and `b` added; a value that does not read as a count (older state) is nothing. */
+export const addCount = (a: unknown, b: Count): Count => plus(count(a), b)
+
+/** One model response's usage added to `day`. */
 export const addTokens = (days: Record<string, Count>, u: StepUsage, day: string): Record<string, Count> => ({
   ...days,
-  [day]: plus(days[day] ?? NO_TOKENS, {
-    fresh: num(u?.input_tokens) + num(u?.cache_creation_input_tokens),
-    out: num(u?.output_tokens),
-    cache: num(u?.cache_read_input_tokens),
-  }),
+  [day]: plus(days[day] ?? NO_TOKENS, tokensOf(u)),
 })
 
 /** What the box shows: `day`'s count, every day's together, the first day counted, and the day with the most. */
@@ -447,6 +446,21 @@ export const fmtResetIn = (resetsAt: number | null | undefined, now: number) => 
 }
 
 /** A rate-limit window's short name: `five_hour` → `5h`, `seven_day_opus` → `7d opus`. */
+/** A solid bar for the main box: whole cells of █, the edge cell in eighths (▏ to ▉), the rest ░. `on` and `off` are drawn in two colours. */
+export const bar = (pct: number, width: number) => {
+  const eighths = Math.max(0, Math.min(width * 8, Math.round((pct / 100) * width * 8)))
+  const full = Math.floor(eighths / 8)
+  const edge = ' ▏▎▍▌▋▊▉'[eighths % 8]!.trim()
+  return { on: '█'.repeat(full) + edge, off: '░'.repeat(Math.max(0, width - full - edge.length)) }
+}
+
+/** The branch a `.git/HEAD` names (`ref: refs/heads/feat/x` is `feat/x`), a detached HEAD's short hash, or '' for anything else. */
+export const branchOf = (head: string) => {
+  const t = head.trim()
+  const ref = /^ref:\s*(?:refs\/heads\/)?(?:refs\/)?(\S+)$/.exec(t)
+  return ref ? ref[1]! : /^[0-9a-f]{40,64}$/i.test(t) ? t.slice(0, 7) : ''
+}
+
 export const limitLabel = (kind: string) =>
   kind
     .replace(/five[_ -]?hours?/i, '5h')
@@ -596,15 +610,6 @@ export const consultTimeline = (a: Architect, now: number, width: number) => {
   return cells.join('')
 }
 
-export const receiptOf = (t: Turn, o: { durationMs: number; agentsSince: number; costNow: number | null; reason: string }): Receipt => ({
-  durationMs: o.durationMs,
-  agents: o.agentsSince,
-  edits: t.edits,
-  errors: t.errors,
-  costDelta: o.costNow !== null && t.costAtStart !== null && o.costNow - t.costAtStart >= 0.005 ? o.costNow - t.costAtStart : null,
-  reason: o.reason,
-})
-
 // ---------------------------------------------------------------- agents and loops
 
 type StepUsage = { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; output_tokens?: number } | null
@@ -619,6 +624,7 @@ export const applyStep = (c: AgentCard, s: { model: string; usage: StepUsage; st
     steps: c.steps + 1,
     ctx: ctx > 0 ? ctx : c.ctx,
     out: c.out + (u.output_tokens ?? 0),
+    used: addCount(c.used, tokensOf(u)),
     lastStop: s.stopReason,
   }
 }
@@ -706,9 +712,6 @@ export const etaText = (elapsedMs: number, baseMs: number) => {
 /** How many agent cards sit side by side in `width` cells, 20 each and a gap between: at least one, at most `maxCards`. More agents than that draw as swimlanes. */
 export const cardsFit = (width: number, maxCards: number) => Math.max(1, Math.min(maxCards, Math.floor((width + 1) / 21)))
 
-/** How many log lines fit: what the other panels leave, never fewer than 4 nor more than 8. */
-export const logRows = (bodyRows: number, used: number) => Math.max(4, Math.min(8, bodyRows - used - 3))
-
 /** Legend items that fit on one row of `width` cells, in order; the rest are dropped. */
 export const fitLegend = <T extends { label: string }>(items: T[], width: number) => {
   const out: T[] = []
@@ -757,17 +760,6 @@ export const titleLines = (title: string, first: number, rest: number): [string,
   const cut = t.lastIndexOf(' ', first)
   const at = cut > 0 ? cut : first
   return [t.slice(0, at).trim(), shorten(t.slice(at), rest)]
-}
-
-/**
- * What a turn's opening text was, for the log: the person's words, or for a turn the engine
- * opened with a tagged message (a subagent's hand-back, a task notification), that message's kind.
- */
-export const promptLine = (text: string): { who: string; text: string } => {
-  const tag = /^\s*<([a-z][\w-]*)/i.exec(text)?.[1]
-  if (!tag) return { who: 'you', text: shorten(text, 70) }
-  const from = /\bfrom="([^"]+)"/.exec(text)?.[1]
-  return { who: 'engine', text: shorten(`${tag.replace(/[-_]/g, ' ')}${from ? ` from ${from.slice(0, 8)}` : ''}`, 70) }
 }
 
 /**
