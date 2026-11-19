@@ -1,0 +1,124 @@
+{
+  "name": "flightdeck-plus",
+  "version": "0.7.0",
+  "description": "Flightdeck Plus: bản fork của Flightdeck (bảng điều khiển agent trực tiếp cho Claude Code) thêm hộp token (hôm nay, tổng, ngày cao nhất), lời chào, và mascot Clawd gõ code trên laptop khi làm việc, ngồi nhìn quanh khi rảnh. Giao diện tiếng Việt",
+  "author": {
+    "name": "Stephen Casella",
+    "url": "https://github.com/scasella"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "claude-code-mod",
+    "claude-code-plugin",
+    "dashboard",
+    "subagents",
+    "agents",
+    "observability",
+    "tui",
+    "fork",
+    "tokens",
+    "mascot"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "architectPattern": {
+      "title": "Mẫu architect",
+      "description": "Biểu thức chính quy (không phân biệt hoa thường) cho loại agent và server tool được tính là architect trực chiến, ví dụ advisor|architect",
+      "type": "string",
+      "default": "advisor|architect"
+    },
+    "architectLabel": {
+      "title": "Nhãn architect",
+      "description": "Tên hiển thị cho vai trò architect",
+      "type": "string",
+      "default": "ARCHITECT"
+    },
+    "gateLabel": {
+      "title": "Nhãn gate",
+      "description": "Tên hiển thị cho bảng quyền",
+      "type": "string",
+      "default": "GATE"
+    },
+    "panels": {
+      "title": "Các bảng",
+      "description": "Các bảng theo thứ tự hiển thị, cách nhau bằng dấu phẩy: main, tokens, architect, gate, agents, loops, receipt, log. Bỏ một tên để ẩn bảng đó.",
+      "type": "string",
+      "default": "main,tokens,architect,gate,agents,loops,receipt,log"
+    },
+    "motion": {
+      "title": "Chuyển động",
+      "description": "Làm động các đường nối khi có việc thật đang chạy, hoặc giữ yên",
+      "type": "string",
+      "options": [
+        "while-active",
+        "off"
+      ],
+      "default": "while-active"
+    },
+    "moments": {
+      "title": "Thời điểm tham vấn",
+      "description": "Hiện thời điểm suy đoán của mỗi lần tham vấn (trước kế hoạch, lỗi lặp lại, trước khi xong)",
+      "type": "boolean",
+      "default": true
+    },
+    "matchDescriptions": {
+      "title": "Khớp theo mô tả agent",
+      "description": "Tính cả loại agent là architect khi mô tả (không chỉ tên) khớp với mẫu",
+      "type": "boolean",
+      "default": false
+    },
+    "maxCards": {
+      "title": "Số thẻ trước khi chuyển sang làn",
+      "description": "Số thẻ agent vẽ cạnh nhau; nhiều agent hơn mức này sẽ chuyển sang dạng làn (1-6)",
+      "type": "number",
+      "default": 3
+    },
+    "paneColumns": {
+      "title": "Độ rộng bảng",
+      "description": "Số cột bảng yêu cầu khi gắn cạnh bản ghi toàn màn hình, từ 40 trở lên. Claude Code giới hạn ở 45% terminal, và độ rộng bạn kéo sẽ được ưu tiên.",
+      "type": "number",
+      "default": 66
+    },
+    "layout": {
+      "title": "Bố cục",
+      "description": "auto: bản tóm tắt tối đa 8 dòng khi bảng nằm trên ô nhập, hai cột từ 110 cột khi gắn cạnh, còn lại một cột",
+      "type": "string",
+      "options": [
+        "auto",
+        "compact",
+        "wide",
+        "mini"
+      ],
+      "default": "auto"
+    },
+    "palette": {
+      "title": "Bảng màu",
+      "description": "theme theo giao diện Claude Code của bạn (sáng, tối, mù màu); pastel là màu cố định chỉnh cho terminal tối",
+      "type": "string",
+      "options": [
+        "theme",
+        "pastel"
+      ],
+      "default": "theme"
+    },
+    "openOnStart": {
+      "title": "Mở khi khởi động",
+      "description": "Mở bảng khi bắt đầu phiên",
+      "type": "boolean",
+      "default": true
+    },
+    "statusLine": {
+      "title": "Thanh trạng thái",
+      "description": "Hiện ngữ cảnh, agent, tham vấn và từ chối trên thanh trạng thái",
+      "type": "boolean",
+      "default": true
+    },
+    "userName": {
+      "title": "Tên của bạn",
+      "description": "Tên Clawd dùng để chào bạn, ví dụ Nhung. Để trống thì chào chung",
+      "type": "string",
+      "default": ""
+    }
+  }
+}

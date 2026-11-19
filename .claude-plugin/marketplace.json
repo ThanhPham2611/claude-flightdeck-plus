@@ -1,0 +1,16 @@
+{
+  "name": "flightdeck-plus",
+  "metadata": {
+    "description": "Flightdeck Plus: fork của Flightdeck cho Claude Code, thêm hộp token, lời chào và mascot Clawd, giao diện tiếng Việt."
+  },
+  "owner": {
+    "name": "Flightdeck Plus"
+  },
+  "plugins": [
+    {
+      "name": "flightdeck-plus",
+      "source": "./",
+      "description": "Bảng điều khiển agent trực tiếp cho Claude Code, thêm hộp token, lời chào và mascot Clawd."
+    }
+  ]
+}
